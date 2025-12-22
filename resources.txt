@@ -1,2 +1,3 @@
 https://superuser.com/questions/1274901/systemd-forking-vs-simple/1274913#1274913
 https://www.geeksforgeeks.org/operating-systems/daemon-processes/
+https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html?__goaway_challenge=meta-refresh&__goaway_id=2a16cbda06eddcb5c072e55f204d821d

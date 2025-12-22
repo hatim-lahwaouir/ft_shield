@@ -46,6 +46,7 @@
 *.mod*
 *.cmd
 .tmp_versions/
+.vagrant/
 modules.order
 Module.symvers
 Mkfile.old
